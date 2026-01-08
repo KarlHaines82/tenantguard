@@ -3,12 +3,13 @@ import { Button } from '@/components/ui/button.jsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.jsx';
 import { Input } from '@/components/ui/input.jsx';
 import { Label } from '@/components/ui/label.jsx';
+import { API_BASE_URL } from '../lib/apiBase.js';
 
 /**
  * User Management Component
  * Allows admins to create, edit, activate/deactivate, and delete users
  */
-export default function UserManagement({ user }) {
+export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -16,7 +17,7 @@ export default function UserManagement({ user }) {
   const [showDialog, setShowDialog] = useState(false);
   const [dialogMode, setDialogMode] = useState('create');
   const [selectedUser, setSelectedUser] = useState(null);
-  
+
   const [formData, setFormData] = useState({
     email: '',
     username: '',
@@ -32,18 +33,18 @@ export default function UserManagement({ user }) {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/auth/users', {
+      const response = await fetch(`${API_BASE_URL}/auth/users`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         setUsers(data.users || []);
         setError(null);
       } else {
-        throw new Error('Failed to fetch users');
+        throw new Error(`Failed to fetch users (status ${response.status})`);
       }
     } catch (err) {
       console.error('Error fetching users:', err);
@@ -56,7 +57,7 @@ export default function UserManagement({ user }) {
   const handleOpenDialog = (mode, userToEdit = null) => {
     setDialogMode(mode);
     setSelectedUser(userToEdit);
-    
+
     if (mode === 'edit' && userToEdit) {
       setFormData({
         email: userToEdit.email,
@@ -74,7 +75,7 @@ export default function UserManagement({ user }) {
         is_active: true
       });
     }
-    
+
     setShowDialog(true);
     setError(null);
     setSuccess(null);
@@ -87,14 +88,14 @@ export default function UserManagement({ user }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     try {
-      const url = dialogMode === 'create' 
-        ? '/api/auth/users'
-        : `/api/auth/users/${selectedUser.id}`;
-      
+      const url = dialogMode === 'create'
+        ? `${API_BASE_URL}/auth/users`
+        : `${API_BASE_URL}/auth/users/${selectedUser.id}`;
+
       const method = dialogMode === 'create' ? 'POST' : 'PUT';
-      
+
       const response = await fetch(url, {
         method,
         headers: {
@@ -103,9 +104,9 @@ export default function UserManagement({ user }) {
         },
         body: JSON.stringify(formData)
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         setSuccess(`User ${dialogMode === 'create' ? 'created' : 'updated'} successfully`);
         handleCloseDialog();
@@ -122,20 +123,20 @@ export default function UserManagement({ user }) {
     if (!confirm('Are you sure you want to delete this user?')) {
       return;
     }
-    
+
     try {
-      const response = await fetch(`/api/auth/users/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/auth/users/${userId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
       });
-      
+
       if (response.ok) {
         setSuccess('User deleted successfully');
         fetchUsers();
       } else {
-        throw new Error('Failed to delete user');
+        throw new Error(`Failed to delete user (status ${response.status})`);
       }
     } catch (err) {
       setError(err.message);
@@ -144,7 +145,7 @@ export default function UserManagement({ user }) {
 
   const handleToggleActive = async (userId, currentStatus) => {
     try {
-      const response = await fetch(`/api/auth/users/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/auth/users/${userId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -152,12 +153,12 @@ export default function UserManagement({ user }) {
         },
         body: JSON.stringify({ is_active: !currentStatus })
       });
-      
+
       if (response.ok) {
         setSuccess(`User ${!currentStatus ? 'activated' : 'deactivated'} successfully`);
         fetchUsers();
       } else {
-        throw new Error('Failed to update user status');
+        throw new Error(`Failed to update user status (status ${response.status})`);
       }
     } catch (err) {
       setError(err.message);
@@ -218,18 +219,16 @@ export default function UserManagement({ user }) {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{u.email}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        u.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                        u.role === 'editor' ? 'bg-blue-100 text-blue-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                          u.role === 'editor' ? 'bg-blue-100 text-blue-800' :
+                            'bg-gray-100 text-gray-800'
+                        }`}>
                         {u.role}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                      }`}>
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
                         {u.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
@@ -280,7 +279,7 @@ export default function UserManagement({ user }) {
                     id="email"
                     type="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     required
                   />
                 </div>
@@ -291,7 +290,7 @@ export default function UserManagement({ user }) {
                     id="username"
                     type="text"
                     value={formData.username}
-                    onChange={(e) => setFormData({...formData, username: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                     required
                   />
                 </div>
@@ -302,7 +301,7 @@ export default function UserManagement({ user }) {
                     id="full_name"
                     type="text"
                     value={formData.full_name}
-                    onChange={(e) => setFormData({...formData, full_name: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
                   />
                 </div>
 
@@ -311,7 +310,7 @@ export default function UserManagement({ user }) {
                   <select
                     id="role"
                     value={formData.role}
-                    onChange={(e) => setFormData({...formData, role: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                     className="w-full border border-gray-300 rounded-md px-3 py-2"
                   >
                     <option value="viewer">Viewer</option>
@@ -325,7 +324,7 @@ export default function UserManagement({ user }) {
                     type="checkbox"
                     id="is_active"
                     checked={formData.is_active}
-                    onChange={(e) => setFormData({...formData, is_active: e.target.checked})}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
                     className="rounded"
                   />
                   <Label htmlFor="is_active">Active</Label>

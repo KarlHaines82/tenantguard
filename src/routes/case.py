@@ -2,6 +2,11 @@ from flask import Blueprint, request, jsonify
 from src.models.case import Case, db
 from datetime import datetime
 import json
+import os
+
+from src.services import ai_processor
+from src.models.case_analysis import CaseAnalysis
+from src.routes.auth import admin_required
 
 case_bp = Blueprint('case', __name__)
 
@@ -53,29 +58,45 @@ def get_cases():
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         
-        # Build query
-        query = Case.query
-        
-        if status:
-            query = query.filter(Case.status == status)
-        
-        # Paginate results
-        cases = query.order_by(Case.created_at.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        return jsonify({
-            'success': True,
-            'cases': [case.to_dict() for case in cases.items],
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': cases.total,
-                'pages': cases.pages,
-                'has_next': cases.has_next,
-                'has_prev': cases.has_prev
-            }
-        }), 200
+        try:
+            # Build query
+            query = Case.query
+            
+            if status:
+                query = query.filter(Case.status == status)
+            
+            # Paginate results
+            cases = query.order_by(Case.created_at.desc()).paginate(
+                page=page, per_page=per_page, error_out=False
+            )
+            
+            return jsonify({
+                'success': True,
+                'cases': [case.to_dict() for case in cases.items],
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': cases.total,
+                    'pages': cases.pages,
+                    'has_next': cases.has_next,
+                    'has_prev': cases.has_prev
+                }
+            }), 200
+        except Exception as db_error:
+            # If tables don't exist yet, return empty cases
+            print(f"[get_cases] Database query error: {db_error}")
+            return jsonify({
+                'success': True,
+                'cases': [],
+                'pagination': {
+                    'page': 1,
+                    'per_page': per_page,
+                    'total': 0,
+                    'pages': 0,
+                    'has_next': False,
+                    'has_prev': False
+                }
+            }), 200
         
     except Exception as e:
         return jsonify({
@@ -252,5 +273,75 @@ def search_cases():
     except Exception as e:
         return jsonify({
             'error': 'Failed to search cases',
+            'details': str(e)
+        }), 500
+
+
+@case_bp.route('/cases/<case_number>/analyses', methods=['GET'])
+@admin_required
+def get_case_analyses(current_user, case_number):
+    """Return analyses saved for a case (admin only)."""
+    try:
+        case = Case.query.filter_by(case_number=case_number).first()
+        if not case:
+            return jsonify({'error': 'Case not found'}), 404
+
+        from src.models.case_analysis import CaseAnalysis
+
+        analyses = CaseAnalysis.query.filter_by(case_id=case.id).order_by(CaseAnalysis.created_at.desc()).all()
+
+        return jsonify({
+            'success': True,
+            'analyses': [a.to_dict() for a in analyses]
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch analyses', 'details': str(e)}), 500
+
+
+@case_bp.route('/cases/<case_number>/process', methods=['POST'])
+def process_case(case_number):
+    """Analyze a case with the AI processor and return suggestions.
+
+    This endpoint runs a lightweight analysis using local heuristics and
+    the ai_processor service. It does NOT persist analysis results to the
+    database (to avoid schema migrations). If you want persistence, add a
+    separate table/column and a migration in a follow-up work order.
+    """
+    try:
+        case = Case.query.filter_by(case_number=case_number).first()
+
+        if not case:
+            return jsonify({'error': 'Case not found'}), 404
+
+        # Dedupe: check for existing queued/started job for this case
+        from src.lib.queue_utils import find_existing_case_job, acquire_case_lock
+        from redis import Redis
+        from rq import Queue
+        from src.tasks.llm_tasks import perform_case_analysis
+
+        existing = find_existing_case_job(case.id)
+        if existing:
+            return jsonify({'success': False, 'message': 'Analysis already queued or running', 'job_id': existing}), 409
+
+        # Rate-limit enqueue attempts per-case for short window
+        locked = acquire_case_lock(case.id, ttl=60)
+        if not locked:
+            return jsonify({'error': 'Too many enqueue attempts for this case, try again later'}), 429
+
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        redis_conn = Redis.from_url(redis_url)
+        q = Queue('default', connection=redis_conn)
+
+        job = q.enqueue(perform_case_analysis, case.id)
+
+        return jsonify({
+            'success': True,
+            'queued': True,
+            'job_id': job.get_id()
+        }), 202
+
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to process case',
             'details': str(e)
         }), 500
